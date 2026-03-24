@@ -1,8 +1,9 @@
 import os
 import random
 import time
+import warnings
 import yaml
-from argparse import Namespace
+from argparse import ArgumentTypeError, Namespace
 from copy import deepcopy
 from collections import Counter
 from typing import List, Tuple, Union, OrderedDict
@@ -39,6 +40,17 @@ def fix_random_seed(seed: int) -> None:
     torch.backends.cudnn.benchmark = False
 
 
+def str2bool(value):
+    if isinstance(value, bool):
+        return value
+    normalized = str(value).strip().lower()
+    if normalized in {"true", "1", "yes", "y", "t"}:
+        return True
+    if normalized in {"false", "0", "no", "n", "f"}:
+        return False
+    raise ArgumentTypeError(f"Invalid boolean value: {value}")
+
+
 def get_best_device(use_cuda: bool) -> torch.device:
     """Dynamically select the vacant CUDA device for running FL experiment.
 
@@ -50,21 +62,30 @@ def get_best_device(use_cuda: bool) -> torch.device:
     """
     if not torch.cuda.is_available() or not use_cuda:
         return torch.device("cpu")
-    pynvml.nvmlInit()
-    gpu_memory = []
-    if "CUDA_VISIBLE_DEVICES" in os.environ.keys():
-        gpu_ids = [int(i) for i in os.environ["CUDA_VISIBLE_DEVICES"].split(",")]
-        assert max(gpu_ids) < torch.cuda.device_count()
-    else:
-        gpu_ids = range(torch.cuda.device_count())
+    logical_gpu_ids = list(range(torch.cuda.device_count()))
+    free_memory = {gpu_id: 0 for gpu_id in logical_gpu_ids}
+    try:
+        pynvml.nvmlInit()
+        for gpu_id in logical_gpu_ids:
+            handle = pynvml.nvmlDeviceGetHandleByIndex(gpu_id)
+            memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            free_memory[gpu_id] = memory_info.free
+    except Exception as exc:
+        warnings.warn(f"Failed to query GPU memory with NVML: {exc}. Falling back to ordinal device selection.")
 
-    for i in gpu_ids:
-        handle = pynvml.nvmlDeviceGetHandleByIndex(i)
-        memory_info = pynvml.nvmlDeviceGetMemoryInfo(handle)
-        gpu_memory.append(memory_info.free)
-    gpu_memory = np.array(gpu_memory)
-    best_gpu_id = gpu_ids[int(np.argmax(gpu_memory))]
-    return torch.device(f"cuda:{best_gpu_id}")
+    for gpu_id in sorted(logical_gpu_ids, key=lambda item: free_memory[item], reverse=True):
+        candidate = torch.device(f"cuda:{gpu_id}")
+        try:
+            torch.zeros(1, device=candidate)
+            return candidate
+        except Exception as exc:
+            warnings.warn(
+                f"Skipping CUDA device {gpu_id} because it is not usable in this runtime: {exc}"
+            )
+            continue
+
+    warnings.warn("No usable CUDA device found. Falling back to CPU.")
+    return torch.device("cpu")
 
 
 def trainable_params(

@@ -62,8 +62,20 @@ class MedFedAlignProClient:
     def apply_augmentation(self, batch: torch.Tensor) -> torch.Tensor:
         augmented = []
         for image in batch:
-            aug_image = self.augment_transform(image.cpu())
+            aug_image = image.detach().cpu()
+            image_min = aug_image.min()
+            image_max = aug_image.max()
+            if float(image_max - image_min) > 1e-6:
+                aug_image = (aug_image - image_min) / (image_max - image_min)
+            else:
+                aug_image = torch.zeros_like(aug_image)
+            aug_image = self.augment_transform(aug_image)
             aug_image = aug_image + torch.randn_like(aug_image) * self.args.noise_std
+            aug_mean = aug_image.mean()
+            aug_std = aug_image.std()
+            if float(aug_std) < 1e-6:
+                aug_std = torch.tensor(1.0, dtype=aug_image.dtype)
+            aug_image = (aug_image - aug_mean) / aug_std
             augmented.append(aug_image)
         return torch.stack(augmented, dim=0).to(self.device)
 

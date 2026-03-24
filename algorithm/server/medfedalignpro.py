@@ -28,14 +28,14 @@ from data.medical_dataset import (
     load_medical_domain_bundle,
 )
 from model.models import get_model_arch
-from utils.tools import Logger, fix_random_seed, get_best_device, local_time
+from utils.tools import Logger, fix_random_seed, get_best_device, local_time, str2bool
 
 
 def get_medfedalignpro_argparser():
     parser = ArgumentParser(description="MedFedAlignPro arguments.")
     parser.add_argument("-d", "--dataset", type=str, default=MEDICAL_DATASET_NAME)
-    parser.add_argument("--use-cuda", type=bool, default=True)
-    parser.add_argument("--save_log", type=bool, default=True)
+    parser.add_argument("--use-cuda", type=str2bool, default=True)
+    parser.add_argument("--save_log", type=str2bool, default=True)
     parser.add_argument("--output_dir", type=str, default="medical_output")
     parser.add_argument("--medical_backbone", type=str, default="res18", choices=["res18", "res34", "res50", "mobile3s", "mobile3l"])
     parser.add_argument("--optimizer", type=str, default="adam", choices=["adam", "sgd"])

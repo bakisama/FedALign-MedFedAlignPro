@@ -11,7 +11,7 @@ EXTRA_ARGS="${EXTRA_ARGS:-}"
 
 cd "${REPO_DIR}"
 
-python -m pip install -q -r requirements.txt
+python -m pip install -q datasets pydicom rich pynvml prefetch_generator
 
 CMD=(
   python main.py MedFedAlignPro
