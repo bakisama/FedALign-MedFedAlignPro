@@ -20,7 +20,7 @@ NUM_CLASSES = {
     "domainnet": 345,
     "minidomainnet": 126,
     "caltech10": 10,
-    "medical_cxr": 2,
+    "medical_cxr": 1,
 }
 
 
