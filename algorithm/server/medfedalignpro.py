@@ -24,6 +24,8 @@ from data.medical_dataset import (
     DEFAULT_MEDICAL_DOMAINS,
     MEDICAL_DATASET_NAME,
     MEDICAL_NUM_CLASSES,
+    NEGATIVE_LABEL_NAME,
+    POSITIVE_LABEL_NAME,
     build_medical_federated_splits,
     load_medical_domain_bundle,
 )
@@ -62,7 +64,7 @@ def get_medfedalignpro_argparser():
     parser.add_argument("--heldout_domain", type=str, default="")
     parser.add_argument("--cache_dir", type=str, default="")
     parser.add_argument("--plot_tsne", action="store_true")
-    parser.add_argument("--binary_task", type=str, default="pneumonia")
+    parser.add_argument("--binary_task", type=str, default="referable_dr")
     return parser
 
 
@@ -208,7 +210,7 @@ class MedFedAlignProServer:
             "split": split_name,
             "accuracy": float(accuracy_score(labels, preds)),
             "macro_f1": float(f1_score(labels, preds, average="macro", zero_division=0)),
-            "pneumonia_f1": float(f1_score(labels, preds, pos_label=1, average="binary", zero_division=0)),
+            "referable_dr_f1": float(f1_score(labels, preds, pos_label=1, average="binary", zero_division=0)),
             "num_samples": int(len(labels)),
         }
         cm = confusion_matrix(labels, preds, labels=[0, 1])
@@ -221,7 +223,10 @@ class MedFedAlignProServer:
 
     def plot_confusion_matrix(self, cm, split_name: str):
         fig, ax = plt.subplots(figsize=(4, 4))
-        disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=["non-pneumonia", "pneumonia"])
+        disp = ConfusionMatrixDisplay(
+            confusion_matrix=cm,
+            display_labels=[NEGATIVE_LABEL_NAME, POSITIVE_LABEL_NAME],
+        )
         disp.plot(ax=ax, colorbar=False)
         plt.tight_layout()
         plt.savefig(os.path.join(self.path2output_dir, f"{split_name}_confusion_matrix.png"))
@@ -238,9 +243,9 @@ class MedFedAlignProServer:
         fig, ax = plt.subplots(figsize=(4, 4))
         im = ax.imshow(cosine, vmin=-1, vmax=1, cmap="coolwarm")
         ax.set_xticks([0, 1])
-        ax.set_xticklabels(["non-pneumonia", "pneumonia"])
+        ax.set_xticklabels([NEGATIVE_LABEL_NAME, POSITIVE_LABEL_NAME])
         ax.set_yticks([0, 1])
-        ax.set_yticklabels(["non-pneumonia", "pneumonia"])
+        ax.set_yticklabels([NEGATIVE_LABEL_NAME, POSITIVE_LABEL_NAME])
         fig.colorbar(im, ax=ax)
         plt.tight_layout()
         plt.savefig(os.path.join(self.path2output_dir, "prototype_heatmap.png"))
@@ -318,7 +323,7 @@ class MedFedAlignProServer:
                     "val_macro_f1": val_metrics["macro_f1"],
                     "test_accuracy": test_metrics["accuracy"],
                     "test_macro_f1": test_metrics["macro_f1"],
-                    "test_pneumonia_f1": test_metrics["pneumonia_f1"],
+                    "test_referable_dr_f1": test_metrics["referable_dr_f1"],
                 }
                 self.round_history.append(record)
                 self.logger.log(
@@ -338,7 +343,7 @@ class MedFedAlignProServer:
                 "heldout_domain": heldout_domain,
                 "accuracy": final_row["test_accuracy"],
                 "macro_f1": final_row["test_macro_f1"],
-                "pneumonia_f1": final_row["test_pneumonia_f1"],
+                "referable_dr_f1": final_row["test_referable_dr_f1"],
                 "num_source_domains": len(self.available_domains) - 1,
             }
             pd.DataFrame([summary]).to_csv(

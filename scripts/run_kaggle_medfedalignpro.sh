@@ -2,7 +2,7 @@
 set -euo pipefail
 
 REPO_DIR="${REPO_DIR:-/kaggle/working/FedALign-MedFedAlignPro}"
-DOMAINS="${DOMAINS:-nih,guangzhou}"
+DOMAINS="${DOMAINS:-aptos,idrid,messidor,messidor2}"
 ROUND="${ROUND:-1}"
 NUM_EPOCHS="${NUM_EPOCHS:-1}"
 BATCH_SIZE="${BATCH_SIZE:-8}"
@@ -15,7 +15,7 @@ python -m pip install -q datasets pydicom rich pynvml prefetch_generator
 
 CMD=(
   python main.py MedFedAlignPro
-  -d medical_cxr
+  -d medical_dr
   --domains "${DOMAINS}"
   --round "${ROUND}"
   --num_epochs "${NUM_EPOCHS}"

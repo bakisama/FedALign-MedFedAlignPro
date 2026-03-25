@@ -1,4 +1,3 @@
-import csv
 import os
 import warnings
 from collections import defaultdict
@@ -7,24 +6,54 @@ from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
+import pandas as pd
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
 from torchvision import transforms
 
 
-DEFAULT_MEDICAL_DOMAINS = ["nih", "guangzhou", "rsna"]
-MEDICAL_DATASET_NAME = "medical_cxr"
+DEFAULT_MEDICAL_DOMAINS = ["aptos", "idrid", "messidor", "messidor2"]
+MEDICAL_DATASET_NAME = "medical_dr"
 MEDICAL_NUM_CLASSES = 2
+POSITIVE_LABEL_NAME = "referable_dr"
+NEGATIVE_LABEL_NAME = "non_referable_dr"
 
-RSNA_CANDIDATE_DIRS = [
-    "/kaggle/input/rsna-pneumonia-detection-challenge",
-    "/kaggle/input/rsna-pneumonia-detection-challenge-2018",
-    "/kaggle/input/rsna-pneumonia-detection",
+IMAGE_SUFFIXES = {".png", ".jpg", ".jpeg", ".bmp", ".tif", ".tiff"}
+METADATA_SUFFIXES = {".csv", ".xls", ".xlsx"}
+
+DOMAIN_ALIASES = {
+    "aptos": ["aptos", "blindness-detection"],
+    "idrid": ["idrid"],
+    "messidor": ["messidor"],
+    "messidor2": ["messidor2", "messidor-2"],
+}
+
+IMAGE_COL_ALIASES = [
+    "id_code",
+    "image_id",
+    "image",
+    "image name",
+    "img",
+    "filename",
+    "file_name",
+    "file",
+    "name",
+]
+LABEL_COL_ALIASES = [
+    "diagnosis",
+    "dr_grade",
+    "grade",
+    "level",
+    "label",
+    "class",
+    "referable",
+    "referable_dr",
+    "dr",
 ]
 
 
-class PerImageZScore:
+class PerImageStandardize:
     def __call__(self, tensor: torch.Tensor) -> torch.Tensor:
         mean = tensor.mean()
         std = tensor.std()
@@ -38,8 +67,7 @@ def get_medical_base_transform(image_size: int = 224):
         [
             transforms.Resize((image_size, image_size)),
             transforms.ToTensor(),
-            PerImageZScore(),
-            transforms.Lambda(lambda x: x.repeat(3, 1, 1)),
+            PerImageStandardize(),
         ]
     )
 
@@ -49,32 +77,10 @@ def get_medical_augment_transform(image_size: int = 224):
         [
             transforms.RandomResizedCrop(image_size, scale=(0.9, 1.0)),
             transforms.RandomRotation(degrees=7),
-            transforms.ColorJitter(brightness=0.15, contrast=0.15),
+            transforms.ColorJitter(brightness=0.15, contrast=0.15, saturation=0.1),
             transforms.GaussianBlur(kernel_size=3, sigma=(0.1, 1.5)),
         ]
     )
-
-
-def try_import_hf_datasets():
-    try:
-        from datasets import load_dataset  # type: ignore
-    except ImportError as exc:
-        raise ImportError(
-            "The `datasets` package is required for Hugging Face medical dataset loading. "
-            "Install it with `pip install datasets`."
-        ) from exc
-    return load_dataset
-
-
-def try_import_pydicom():
-    try:
-        import pydicom  # type: ignore
-    except ImportError as exc:
-        raise ImportError(
-            "Reading RSNA DICOM files requires `pydicom`. Install it with `pip install pydicom` "
-            "or provide pre-converted PNG/JPG images."
-        ) from exc
-    return pydicom
 
 
 @dataclass
@@ -86,31 +92,13 @@ class MedicalSample:
 
 
 class MedicalStore:
-    def __init__(
-        self,
-        store_id: str,
-        domain: str,
-        storage_type: str,
-        dataset=None,
-        image_key: Optional[str] = None,
-        records: Optional[List[Dict]] = None,
-    ):
+    def __init__(self, store_id: str, domain: str, records: Sequence[Dict]):
         self.store_id = store_id
         self.domain = domain
-        self.storage_type = storage_type
-        self.dataset = dataset
-        self.image_key = image_key
-        self.records = records or []
+        self.records = list(records)
 
     def get_image(self, item_index: int) -> Image.Image:
-        if self.storage_type == "hf":
-            example = self.dataset[item_index]
-            image = extract_hf_image(example, self.image_key)
-            return image.convert("L")
-        if self.storage_type == "path":
-            record = self.records[item_index]
-            return load_path_image(record["path"]).convert("L")
-        raise ValueError(f"Unknown storage type: {self.storage_type}")
+        return Image.open(self.records[item_index]["path"]).convert("RGB")
 
 
 class MedicalFederatedDataset(Dataset):
@@ -136,88 +124,164 @@ class MedicalFederatedDataset(Dataset):
         return image, label, sample.domain
 
 
-def load_path_image(path: str) -> Image.Image:
-    suffix = Path(path).suffix.lower()
-    if suffix == ".dcm":
-        pydicom = try_import_pydicom()
-        dcm = pydicom.dcmread(path)
-        array = dcm.pixel_array.astype(np.float32)
-        array = array - array.min()
-        denom = max(array.max(), 1.0)
-        array = (255.0 * (array / denom)).astype(np.uint8)
-        return Image.fromarray(array)
-    return Image.open(path)
+def normalize_name(value: str) -> str:
+    return str(value).strip().lower().replace("_", " ").replace("-", " ")
 
 
-def extract_hf_image(example: Dict, image_key: Optional[str]) -> Image.Image:
-    if image_key and image_key in example:
-        image = example[image_key]
-    else:
-        image = None
-        for key in ["image", "img", "Image", "pixel_values", "x"]:
-            if key in example:
-                image = example[key]
-                break
-    if image is None:
-        raise KeyError(f"Could not find an image field in Hugging Face example keys: {list(example.keys())}")
-
-    if isinstance(image, Image.Image):
-        return image
-    if isinstance(image, dict):
-        if "path" in image and image["path"]:
-            return Image.open(image["path"])
-        if "bytes" in image and image["bytes"]:
-            from io import BytesIO
-
-            return Image.open(BytesIO(image["bytes"]))
-    raise TypeError(f"Unsupported Hugging Face image payload type: {type(image)}")
-
-
-def normalize_label_name(label_name: str) -> str:
-    return label_name.strip().lower().replace("_", " ").replace("-", " ")
-
-
-def map_nih_label(example: Dict) -> Optional[int]:
-    raw_value = None
-    for key in ["Finding Labels", "finding_labels", "labels", "label"]:
-        if key in example:
-            raw_value = example[key]
-            break
-    if raw_value is None:
+def normalize_referable_dr_label(raw_value) -> Optional[int]:
+    if raw_value is None or (isinstance(raw_value, float) and np.isnan(raw_value)):
         return None
-    if isinstance(raw_value, str):
-        label_names = [normalize_label_name(v) for v in raw_value.split("|")]
-    elif isinstance(raw_value, (list, tuple)):
-        label_names = [normalize_label_name(str(v)) for v in raw_value]
-    else:
-        label_names = [normalize_label_name(str(raw_value))]
-    if "pneumonia" in label_names:
-        return 1
-    if label_names == ["no finding"] or label_names == ["normal"]:
-        return 0
-    return None
 
-
-def map_guangzhou_label(example: Dict) -> Optional[int]:
-    raw_value = None
-    for key in ["label", "labels", "class", "target"]:
-        if key in example:
-            raw_value = example[key]
-            break
-    if raw_value is None:
-        return None
-    if isinstance(raw_value, str):
-        value = normalize_label_name(raw_value)
-        if "pneumonia" in value:
-            return 1
-        if "normal" in value:
-            return 0
-        return None
-    if isinstance(raw_value, bool):
-        return int(raw_value)
     if isinstance(raw_value, (int, np.integer)):
-        return int(raw_value)
+        return int(raw_value >= 2)
+    if isinstance(raw_value, (float, np.floating)):
+        return int(int(raw_value) >= 2)
+
+    normalized = normalize_name(raw_value)
+    if normalized in {"0", "no dr", "normal", "non referable", "non referable dr", "non-referable"}:
+        return 0
+    if normalized in {
+        "1",
+        "mild",
+    }:
+        return 0
+    if normalized in {
+        "2",
+        "3",
+        "4",
+        "moderate",
+        "severe",
+        "proliferative",
+        "referable",
+        "referable dr",
+        "rdr",
+        "vtdr",
+        "positive",
+    }:
+        return 1
+    try:
+        return int(int(float(normalized)) >= 2)
+    except ValueError:
+        return None
+
+
+def infer_column(columns: Iterable[str], aliases: Sequence[str]) -> Optional[str]:
+    normalized_map = {normalize_name(col): col for col in columns}
+    for alias in aliases:
+        normalized_alias = normalize_name(alias)
+        if normalized_alias in normalized_map:
+            return normalized_map[normalized_alias]
     return None
+
+
+def read_metadata_table(path: Path) -> pd.DataFrame:
+    if path.suffix.lower() == ".csv":
+        return pd.read_csv(path)
+    return pd.read_excel(path)
+
+
+def discover_domain_root(domain: str) -> Optional[Path]:
+    env_key = f"{domain.upper()}_ROOT"
+    env_value = os.environ.get(env_key)
+    if env_value and Path(env_value).exists():
+        return Path(env_value)
+
+    kaggle_input = Path("/kaggle/input")
+    if kaggle_input.exists():
+        aliases = DOMAIN_ALIASES.get(domain, [domain])
+        for child in kaggle_input.iterdir():
+            normalized = normalize_name(child.name)
+            if any(alias in normalized for alias in aliases):
+                return child
+    return None
+
+
+def build_image_index(root: Path) -> Dict[str, Path]:
+    image_index: Dict[str, Path] = {}
+    for path in root.rglob("*"):
+        if path.suffix.lower() not in IMAGE_SUFFIXES:
+            continue
+        image_index[path.stem.lower()] = path
+        image_index[path.name.lower()] = path
+        image_index[str(path.relative_to(root)).lower()] = path
+    return image_index
+
+
+def resolve_image_path(image_value, image_index: Dict[str, Path], root: Path) -> Optional[Path]:
+    if image_value is None or (isinstance(image_value, float) and np.isnan(image_value)):
+        return None
+    image_text = str(image_value).strip()
+    candidates = [image_text, Path(image_text).stem]
+    path_candidate = root / image_text
+    if path_candidate.exists():
+        return path_candidate
+    for suffix in IMAGE_SUFFIXES:
+        stem_candidate = root / f"{image_text}{suffix}"
+        if stem_candidate.exists():
+            return stem_candidate
+    for candidate in candidates:
+        normalized = candidate.lower()
+        if normalized in image_index:
+            return image_index[normalized]
+        for suffix in IMAGE_SUFFIXES:
+            with_suffix = f"{normalized}{suffix}"
+            if with_suffix in image_index:
+                return image_index[with_suffix]
+    return None
+
+
+def collect_domain_records(domain: str, root: Path) -> List[Dict]:
+    image_index = build_image_index(root)
+    metadata_paths = [
+        path
+        for path in root.rglob("*")
+        if path.suffix.lower() in METADATA_SUFFIXES and "sample" not in path.name.lower()
+    ]
+    best_records: List[Dict] = []
+    for metadata_path in metadata_paths:
+        try:
+            df = read_metadata_table(metadata_path)
+        except Exception:
+            continue
+        image_col = infer_column(df.columns, IMAGE_COL_ALIASES)
+        label_col = infer_column(df.columns, LABEL_COL_ALIASES)
+        if image_col is None or label_col is None:
+            continue
+        records: List[Dict] = []
+        for _, row in df.iterrows():
+            label = normalize_referable_dr_label(row[label_col])
+            if label is None:
+                continue
+            image_path = resolve_image_path(row[image_col], image_index, root)
+            if image_path is None:
+                continue
+            records.append({"path": str(image_path), "label": label})
+        if len(records) > len(best_records):
+            best_records = records
+    return best_records
+
+
+def load_generic_dr_domain(domain: str) -> Tuple[Optional[MedicalStore], List[MedicalSample]]:
+    root = discover_domain_root(domain)
+    if root is None:
+        return None, []
+
+    records = collect_domain_records(domain, root)
+    if not records:
+        warnings.warn(
+            f"Found root for `{domain}` at {root}, but could not build labeled image records. "
+            "Set the dataset root explicitly with an environment variable like "
+            f"`{domain.upper()}_ROOT` if needed."
+        )
+        return None, []
+
+    store_id = f"{domain}_path"
+    store = MedicalStore(store_id=store_id, domain=domain, records=records)
+    samples = [
+        MedicalSample(store_id=store_id, item_index=index, label=record["label"], domain=domain)
+        for index, record in enumerate(records)
+    ]
+    return store, samples
 
 
 def stratified_split(
@@ -266,178 +330,27 @@ def split_samples_to_clients(
     return client_samples
 
 
-def summarize_samples(samples: Sequence[MedicalSample]) -> Dict[str, Dict[int, int]]:
-    summary: Dict[str, Dict[int, int]] = defaultdict(lambda: defaultdict(int))
-    for sample in samples:
-        summary[sample.domain][sample.label] += 1
-    return {domain: dict(counts) for domain, counts in summary.items()}
-
-
-def discover_rsna_root() -> Optional[str]:
-    for candidate in RSNA_CANDIDATE_DIRS:
-        if os.path.exists(candidate):
-            return candidate
-    return None
-
-
-def load_hf_domain(
-    dataset_name: str,
-    domain_name: str,
-    label_mapper,
-    cache_dir: Optional[str] = None,
-) -> Tuple[MedicalStore, List[MedicalSample]]:
-    load_dataset = try_import_hf_datasets()
-    dataset_dict = load_dataset(dataset_name, cache_dir=cache_dir)
-    if hasattr(dataset_dict, "keys"):
-        if "train" in dataset_dict:
-            hf_dataset = dataset_dict["train"]
-        else:
-            first_split = next(iter(dataset_dict.keys()))
-            hf_dataset = dataset_dict[first_split]
-    else:
-        hf_dataset = dataset_dict
-
-    image_key = None
-    if hasattr(hf_dataset, "column_names"):
-        for key in ["image", "img", "Image", "pixel_values", "x"]:
-            if key in hf_dataset.column_names:
-                image_key = key
-                break
-
-    store_id = f"{domain_name}_hf"
-    store = MedicalStore(
-        store_id=store_id,
-        domain=domain_name,
-        storage_type="hf",
-        dataset=hf_dataset,
-        image_key=image_key,
-    )
-    samples: List[MedicalSample] = []
-    for item_index, example in enumerate(hf_dataset):
-        label = label_mapper(example)
-        if label is None:
-            continue
-        samples.append(
-            MedicalSample(
-                store_id=store_id,
-                item_index=item_index,
-                label=int(label),
-                domain=domain_name,
-            )
-        )
-    return store, samples
-
-
-def load_rsna_domain(rsna_root: Optional[str] = None) -> Tuple[Optional[MedicalStore], List[MedicalSample]]:
-    rsna_root = rsna_root or discover_rsna_root()
-    if not rsna_root:
-        return None, []
-
-    label_csv = os.path.join(rsna_root, "stage_2_train_labels.csv")
-    class_csv = os.path.join(rsna_root, "stage_2_detailed_class_info.csv")
-    image_dir = os.path.join(rsna_root, "stage_2_train_images")
-    if not (os.path.exists(label_csv) and os.path.exists(class_csv) and os.path.isdir(image_dir)):
-        warnings.warn(f"RSNA root found at {rsna_root}, but expected files are missing. Skipping RSNA domain.")
-        return None, []
-
-    class_map: Dict[str, str] = {}
-    with open(class_csv, "r", newline="") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            class_map[row["patientId"]] = row["class"]
-
-    grouped_target: Dict[str, int] = defaultdict(int)
-    with open(label_csv, "r", newline="") as handle:
-        reader = csv.DictReader(handle)
-        for row in reader:
-            grouped_target[row["patientId"]] = max(grouped_target[row["patientId"]], int(row["Target"]))
-
-    records: List[Dict] = []
-    for patient_id, target in grouped_target.items():
-        class_name = class_map.get(patient_id, "")
-        if class_name == "Lung Opacity":
-            label = 1
-        elif class_name == "Normal":
-            label = 0
-        else:
-            continue
-        dcm_path = os.path.join(image_dir, f"{patient_id}.dcm")
-        png_path = os.path.join(image_dir, f"{patient_id}.png")
-        jpg_path = os.path.join(image_dir, f"{patient_id}.jpg")
-        if os.path.exists(dcm_path):
-            image_path = dcm_path
-        elif os.path.exists(png_path):
-            image_path = png_path
-        elif os.path.exists(jpg_path):
-            image_path = jpg_path
-        else:
-            continue
-        records.append({"path": image_path, "label": label, "patient_id": patient_id})
-
-    store = MedicalStore(
-        store_id="rsna_path",
-        domain="rsna",
-        storage_type="path",
-        records=records,
-    )
-    samples = [
-        MedicalSample(store_id="rsna_path", item_index=index, label=record["label"], domain="rsna")
-        for index, record in enumerate(records)
-    ]
-    return store, samples
-
-
 def load_medical_domain_bundle(
     domains: Optional[Iterable[str]] = None, cache_dir: Optional[str] = None
 ) -> Tuple[Dict[str, MedicalStore], Dict[str, List[MedicalSample]], List[str]]:
+    del cache_dir  # Unused for the DR path, retained for interface compatibility.
     requested_domains = list(domains or DEFAULT_MEDICAL_DOMAINS)
     stores: Dict[str, MedicalStore] = {}
     samples_by_domain: Dict[str, List[MedicalSample]] = {}
     unavailable_domains: List[str] = []
 
     for domain in requested_domains:
-        if domain == "nih":
-            try:
-                store, samples = load_hf_domain(
-                    "BahaaEldin0/NIH-Chest-Xray-14",
-                    domain_name="nih",
-                    label_mapper=map_nih_label,
-                    cache_dir=cache_dir,
-                )
-            except Exception as exc:  # pragma: no cover - depends on environment
-                warnings.warn(f"Failed to load NIH domain: {exc}")
-                unavailable_domains.append(domain)
-                continue
-            stores[store.store_id] = store
-            samples_by_domain["nih"] = samples
-        elif domain == "guangzhou":
-            try:
-                store, samples = load_hf_domain(
-                    "hf-vision/chest-xray-pneumonia",
-                    domain_name="guangzhou",
-                    label_mapper=map_guangzhou_label,
-                    cache_dir=cache_dir,
-                )
-            except Exception as exc:  # pragma: no cover - depends on environment
-                warnings.warn(f"Failed to load Guangzhou domain: {exc}")
-                unavailable_domains.append(domain)
-                continue
-            stores[store.store_id] = store
-            samples_by_domain["guangzhou"] = samples
-        elif domain == "rsna":
-            try:
-                store, samples = load_rsna_domain()
-            except Exception as exc:  # pragma: no cover - depends on environment
-                warnings.warn(f"Failed to load RSNA domain: {exc}")
-                unavailable_domains.append(domain)
-                continue
-            if store is None or not samples:
-                unavailable_domains.append(domain)
-                continue
-            stores[store.store_id] = store
-            samples_by_domain["rsna"] = samples
-        else:
+        try:
+            store, samples = load_generic_dr_domain(domain)
+        except Exception as exc:  # pragma: no cover - depends on environment
+            warnings.warn(f"Failed to load {domain}: {exc}")
             unavailable_domains.append(domain)
+            continue
+        if store is None or not samples:
+            unavailable_domains.append(domain)
+            continue
+        stores[store.store_id] = store
+        samples_by_domain[domain] = samples
 
     return stores, samples_by_domain, unavailable_domains
 
@@ -478,7 +391,12 @@ def build_medical_federated_splits(
                 continue
             dataset = MedicalFederatedDataset(stores=stores, samples=samples, transform=base_transform)
             client_datasets.append(dataset)
-            client_domain_summary[client_id] = summarize_samples(samples)
+            client_domain_summary[client_id] = {
+                domain: {
+                    0: sum(sample.label == 0 for sample in samples),
+                    1: sum(sample.label == 1 for sample in samples),
+                }
+            }
             client_id += 1
 
     validation_dataset = MedicalFederatedDataset(

@@ -2,23 +2,23 @@ import unittest
 
 from data.medical_dataset import (
     MedicalSample,
-    map_guangzhou_label,
-    map_nih_label,
+    normalize_referable_dr_label,
     split_samples_to_clients,
     stratified_split,
 )
 
 
 class MedicalDatasetTests(unittest.TestCase):
-    def test_map_nih_label_keeps_only_binary_pneumonia_task(self):
-        self.assertEqual(map_nih_label({"Finding Labels": "No Finding"}), 0)
-        self.assertEqual(map_nih_label({"Finding Labels": "Pneumonia"}), 1)
-        self.assertIsNone(map_nih_label({"Finding Labels": "Infiltration"}))
+    def test_normalize_referable_dr_label_from_grade(self):
+        self.assertEqual(normalize_referable_dr_label(0), 0)
+        self.assertEqual(normalize_referable_dr_label(1), 0)
+        self.assertEqual(normalize_referable_dr_label(2), 1)
+        self.assertEqual(normalize_referable_dr_label(4), 1)
 
-    def test_map_guangzhou_label_accepts_strings_and_ints(self):
-        self.assertEqual(map_guangzhou_label({"label": "NORMAL"}), 0)
-        self.assertEqual(map_guangzhou_label({"label": "PNEUMONIA"}), 1)
-        self.assertEqual(map_guangzhou_label({"label": 1}), 1)
+    def test_normalize_referable_dr_label_from_string(self):
+        self.assertEqual(normalize_referable_dr_label("mild"), 0)
+        self.assertEqual(normalize_referable_dr_label("moderate"), 1)
+        self.assertEqual(normalize_referable_dr_label("referable dr"), 1)
 
     def test_stratified_split_preserves_both_classes(self):
         samples = [

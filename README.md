@@ -1,6 +1,6 @@
 # FedALign-MedFedAlignPro
 
-This repository extends the original FedALign codebase with **MedFedAlignPro**, a Kaggle-ready federated domain generalization pipeline for **multi-site chest X-ray pneumonia classification under scanner/protocol shift**.
+This repository extends the original FedALign codebase with **MedFedAlignPro**, a Kaggle-ready federated domain generalization pipeline for **binary referable diabetic retinopathy classification across multiple fundus datasets**.
 
 Base method:
 - FedAlign: Federated Domain Generalization with Cross-Client Feature Alignment
@@ -17,11 +17,11 @@ The repo now contains two tracks:
 
 ### MedFedAlignPro Highlights
 
-- Chest X-ray binary classification: `0 = non-pneumonia`, `1 = pneumonia`
-- Multi-domain DG with default domains: `nih`, `guangzhou`, `rsna`
+- Binary diabetic retinopathy classification: `0 = non_referable_dr`, `1 = referable_dr`
+- Multi-domain DG with default domains: `aptos`, `idrid`, `messidor`, `messidor2`
 - Kaggle/Hugging Face data loading
 - GPU auto-selection when available
-- Metrics: accuracy, macro-F1, pneumonia-F1
+- Metrics: accuracy, macro-F1, referable-DR F1
 - Plots: round curves, confusion matrices, prototype heatmap, optional t-SNE
 
 ---
@@ -47,19 +47,19 @@ python main.py FedAlign -d minidomainnet
 Quick 2-domain smoke run:
 
 ```bash
-python main.py MedFedAlignPro -d medical_cxr --domains nih,guangzhou --round 1 --num_epochs 1 --batch_size 8
+python main.py MedFedAlignPro -d medical_dr --domains aptos,idrid --round 1 --num_epochs 1 --batch_size 8
 ```
 
-Full medical run with RSNA when attached on Kaggle:
+Full DR run with all available fundus domains:
 
 ```bash
-python main.py MedFedAlignPro -d medical_cxr --domains nih,guangzhou,rsna --round 5 --num_epochs 1 --batch_size 16
+python main.py MedFedAlignPro -d medical_dr --domains aptos,idrid,messidor,messidor2 --round 5 --num_epochs 1 --batch_size 16
 ```
 
 Run a single held-out domain:
 
 ```bash
-python main.py MedFedAlignPro -d medical_cxr --domains nih,guangzhou,rsna --heldout_domain rsna
+python main.py MedFedAlignPro -d medical_dr --domains aptos,idrid,messidor,messidor2 --heldout_domain messidor2
 ```
 
 ### Kaggle
@@ -70,7 +70,7 @@ If you want Kaggle to clone this repository directly, use:
 git clone https://github.com/bakisama/FedALign-MedFedAlignPro.git
 cd FedALign-MedFedAlignPro
 pip install -r requirements.txt
-python main.py MedFedAlignPro -d medical_cxr --domains nih,guangzhou --round 1 --num_epochs 1 --batch_size 8
+python main.py MedFedAlignPro -d medical_dr --domains aptos,idrid --round 1 --num_epochs 1 --batch_size 8
 ```
 
 There is also a helper script:
@@ -82,7 +82,7 @@ bash scripts/run_kaggle_medfedalignpro.sh
 You can override defaults, for example:
 
 ```bash
-REPO_DIR=/kaggle/working/FedALign-MedFedAlignPro DOMAINS=nih,guangzhou,rsna ROUND=3 BATCH_SIZE=16 bash scripts/run_kaggle_medfedalignpro.sh
+REPO_DIR=/kaggle/working/FedALign-MedFedAlignPro DOMAINS=aptos,idrid,messidor,messidor2 ROUND=3 BATCH_SIZE=16 bash scripts/run_kaggle_medfedalignpro.sh
 ```
 
 ## Outputs
@@ -90,7 +90,7 @@ REPO_DIR=/kaggle/working/FedALign-MedFedAlignPro DOMAINS=nih,guangzhou,rsna ROUN
 MedFedAlignPro writes results to:
 
 ```bash
-out/MedFedAlignPro/medical_cxr/<run_timestamp>/
+out/MedFedAlignPro/medical_dr/<run_timestamp>/
 ```
 
 Per held-out domain:
@@ -107,10 +107,9 @@ Cross-domain summary:
 
 ## Notes
 
-- NIH and Guangzhou are loaded via Hugging Face `datasets`
-- RSNA is auto-detected from common Kaggle input paths
-- RSNA DICOM reading uses `pydicom`
-- If Kaggle Internet is disabled, Hugging Face loading will fail unless cached already
+- Domains are discovered from Kaggle-style mounted folders or explicit environment variables such as `APTOS_ROOT` and `IDRID_ROOT`
+- Labels are harmonized into binary `referable_dr` vs `non_referable_dr`
+- Metadata is inferred from CSV/XLS/XLSX files with common image-id and grade column names
 
 ## Citation
 

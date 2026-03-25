@@ -87,7 +87,7 @@ def get_main_argparser():
         "--dataset",
         type=str,
         default="pacs",
-        choices=["pacs", "vlcs", "office_home", "caltech10", "minodomainnet", "domainnet", "medical_cxr"],
+        choices=["pacs", "vlcs", "office_home", "caltech10", "minodomainnet", "domainnet", "medical_dr"],
     )
     return parser
 
@@ -149,7 +149,7 @@ if __name__ == "__main__":
         except:
             index = sys.argv.index("--dataset")
         dataset = sys.argv[index + 1]
-        assert dataset in ALL_DOMAINS.keys() or dataset == "medical_cxr"
+        assert dataset in ALL_DOMAINS.keys() or dataset == "medical_dr"
     else:
         raise ValueError("Please specify the dataset.")
 
