@@ -56,7 +56,8 @@ class MedFedAlignProClient:
         return deepcopy(self.classification_model.state_dict())
 
     def move_to_device(self):
-        self.device = get_best_device(self.args.use_cuda)
+        if self.device is None:
+            self.device = get_best_device(self.args.use_cuda)
         self.classification_model.to(self.device)
 
     def apply_augmentation(self, batch: torch.Tensor) -> torch.Tensor:
