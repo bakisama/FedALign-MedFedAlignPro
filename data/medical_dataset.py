@@ -43,6 +43,7 @@ IMAGE_COL_ALIASES = [
 LABEL_COL_ALIASES = [
     "diagnosis",
     "dr_grade",
+    "retinopathy grade",
     "grade",
     "level",
     "label",
@@ -176,7 +177,10 @@ def infer_column(columns: Iterable[str], aliases: Sequence[str]) -> Optional[str
 
 def read_metadata_table(path: Path) -> pd.DataFrame:
     if path.suffix.lower() == ".csv":
-        return pd.read_csv(path)
+        try:
+            return pd.read_csv(path)
+        except Exception:
+            return pd.read_csv(path, sep=";")
     return pd.read_excel(path)
 
 
